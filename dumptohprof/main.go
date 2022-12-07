@@ -729,6 +729,22 @@ func addHeapDump() {
 
         // figure out what class to use for this object
         var c uint64
+        //obj := d.Object(x)
+        //if d.Ft(x).Typ == nil {
+        //    c = NoPtrClass(d.Size(x))
+        //} else {
+        //    switch d.Ft(x).Kind {
+        //    case read.TypeKindObject:
+        //        c = StdClass(d.Ft(x).Typ, d.Size(x))
+        //    case read.TypeKindArray:
+        //        c = ArrayClass(d.Ft(x).Typ, d.Size(x))
+        //    case read.TypeKindChan:
+        //        c = ChanClass(d.Ft(x).Typ, d.Size(x))
+        //    // TODO: TypeKindConservative
+        //    default:
+        //        log.Fatal("unhandled kind")
+        //    }
+        //}
 
         // make a copy of the object data so we can modify it
         data = append(data[:0], d.Contents(x)...)

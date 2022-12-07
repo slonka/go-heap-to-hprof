@@ -196,6 +196,9 @@ func (d *Dump) Addr(x ObjId) uint64 {
 func (d *Dump) Size(x ObjId) uint64 {
     return uint64(len(d.Contents(x)))
 }
+func (d *Dump) Object(x ObjId) object {
+    return d.objects[x]
+}
 
 // FindObj returns the object id containing the address addr, or -1 if no object contains addr.
 func (d *Dump) FindObj(addr uint64) ObjId {
