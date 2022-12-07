@@ -1,27 +1,27 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"github.com/randall77/hprof/read"
-	"html"
-	"log"
-	"net/http"
-	"os"
-	"runtime"
-	"runtime/debug"
-	"sort"
-	"strconv"
-	"text/template"
+    "flag"
+    "fmt"
+    "github.com/slonka/hprof/read"
+    "html"
+    "log"
+    "net/http"
+    "os"
+    "runtime"
+    "runtime/debug"
+    "sort"
+    "strconv"
+    "text/template"
 )
 
 const (
-	defaultAddr = ":8080" // default webserver address
-	maxFields   = 4096 + 1
+    defaultAddr = ":8080" // default webserver address
+    maxFields   = 4096 + 1
 )
 
 var (
-	httpAddr = flag.String("http", defaultAddr, "HTTP service address")
+    httpAddr = flag.String("http", defaultAddr, "HTTP service address")
 )
 
 // d is the loaded heap dump.
@@ -29,205 +29,205 @@ var d *read.Dump
 
 // link to type's page
 func typeLink(ft *read.FullType) string {
-	return fmt.Sprintf("<a href=\"type?id=%d\">%s</a>", ft.Id, ft.Name)
+    return fmt.Sprintf("<a href=\"type?id=%d\">%s</a>", ft.Id, ft.Name)
 }
 
 func objLink(x read.ObjId) string {
-	return fmt.Sprintf("<a href=obj?id=%d>object %x</a>", x, d.Addr(x))
+    return fmt.Sprintf("<a href=obj?id=%d>object %x</a>", x, d.Addr(x))
 }
 
 // returns an html string representing the target of an Edge
 func edgeLink(e read.Edge) string {
-	s := objLink(e.To)
-	if e.ToOffset != 0 {
-		s = fmt.Sprintf("%s+%d", s, e.ToOffset)
-	}
-	return s
+    s := objLink(e.To)
+    if e.ToOffset != 0 {
+        s = fmt.Sprintf("%s+%d", s, e.ToOffset)
+    }
+    return s
 }
 
 // returns an html string representing the source of an Edge
 func edgeSource(x read.ObjId, e read.Edge) string {
-	s := objLink(x)
-	if e.FieldName != "" {
-		s = fmt.Sprintf("%s.%s", s, e.FieldName)
-	}
-	if e.ToOffset != 0 {
-		s = fmt.Sprintf("%s+%d", s, e.ToOffset)
-	}
-	return s
+    s := objLink(x)
+    if e.FieldName != "" {
+        s = fmt.Sprintf("%s.%s", s, e.FieldName)
+    }
+    if e.ToOffset != 0 {
+        s = fmt.Sprintf("%s+%d", s, e.ToOffset)
+    }
+    return s
 }
 
 // the first d.PtrSize bytes of b contain a pointer.  Return html
 // to represent that pointer.
 func nonheapPtr(b []byte) string {
-	p := readPtr(b)
-	if p == 0 {
-		return "nil"
-	} else {
-		// TODO: look up symbol in executable
-		return fmt.Sprintf("outsideheap_%x", p)
-	}
+    p := readPtr(b)
+    if p == 0 {
+        return "nil"
+    } else {
+        // TODO: look up symbol in executable
+        return fmt.Sprintf("outsideheap_%x", p)
+    }
 }
 
 // display field
 type Field struct {
-	Name  string
-	Typ   string
-	Value string
+    Name  string
+    Typ   string
+    Value string
 }
 
 // rawBytes generates an html string representing the given raw bytes
 func rawBytes(b []byte) string {
-	v := ""
-	s := ""
-	for _, c := range b {
-		v += fmt.Sprintf("%.2x ", c)
-		if c <= 32 || c >= 127 {
-			c = 46
-		}
-		s += fmt.Sprintf("%c", c)
-	}
-	return v + " | " + html.EscapeString(s)
+    v := ""
+    s := ""
+    for _, c := range b {
+        v += fmt.Sprintf("%.2x ", c)
+        if c <= 32 || c >= 127 {
+            c = 46
+        }
+        s += fmt.Sprintf("%c", c)
+    }
+    return v + " | " + html.EscapeString(s)
 }
 
 // getFields uses the data in b to fill in the values for the given field list.
 // edges is a list of known connecting out edges.
 func getFields(b []byte, fields []read.Field, edges []read.Edge) []Field {
-	var r []Field
-	off := uint64(0)
-	for _, f := range fields {
-		if f.Offset < off {
-			log.Fatal("out of order fields")
-		}
-		if f.Offset > off {
-			r = append(r, Field{fmt.Sprintf("<font color=LightGray>pad %d</font>", f.Offset-off), "", ""})
-			off = f.Offset
-		}
-		var value string
-		var typ string
-		switch f.Kind {
-		case read.FieldKindBool:
-			if b[off] == 0 {
-				value = "false"
-			} else {
-				value = "true"
-			}
-			typ = "bool"
-			off++
-		case read.FieldKindUInt8:
-			value = fmt.Sprintf("%d", b[off])
-			typ = "uint8"
-			off++
-		case read.FieldKindSInt8:
-			value = fmt.Sprintf("%d", int8(b[off]))
-			typ = "int8"
-			off++
-		case read.FieldKindUInt16:
-			value = fmt.Sprintf("%d", d.Order.Uint16(b[off:]))
-			typ = "uint16"
-			off += 2
-		case read.FieldKindSInt16:
-			value = fmt.Sprintf("%d", int16(d.Order.Uint16(b[off:])))
-			typ = "int16"
-			off += 2
-		case read.FieldKindUInt32:
-			value = fmt.Sprintf("%d", d.Order.Uint32(b[off:]))
-			typ = "uint32"
-			off += 4
-		case read.FieldKindSInt32:
-			value = fmt.Sprintf("%d", int32(d.Order.Uint32(b[off:])))
-			typ = "int32"
-			off += 4
-		case read.FieldKindUInt64:
-			value = fmt.Sprintf("%d", d.Order.Uint64(b[off:]))
-			typ = "uint64"
-			off += 8
-		case read.FieldKindSInt64:
-			value = fmt.Sprintf("%d", int64(d.Order.Uint64(b[off:])))
-			typ = "int64"
-			off += 8
-		case read.FieldKindBytes8:
-			value = rawBytes(b[off : off+8])
-			typ = "raw bytes"
-			off += 8
-		case read.FieldKindBytes16:
-			value = rawBytes(b[off : off+16])
-			typ = "raw bytes"
-			off += 16
-		case read.FieldKindPtr:
-			typ = "*" + f.BaseType
-			// TODO: get ptr base type somehow?  Also for slices,chans.
-			if len(edges) > 0 && edges[0].FromOffset == off {
-				value = edgeLink(edges[0])
-				edges = edges[1:]
-			} else {
-				value = nonheapPtr(b[off:])
-			}
-			off += d.PtrSize
-		case read.FieldKindIface:
-			// TODO: the itab part?
-			typ = "interface{...}" + f.BaseType
-			if len(edges) > 0 && edges[0].FromOffset == off+d.PtrSize {
-				value = edgeLink(edges[0])
-				edges = edges[1:]
-			} else {
-				// TODO: use itab to decide whether this is a
-				// pointer or a scalar.
-				value = nonheapPtr(b[off+d.PtrSize:])
-			}
-			off += 2 * d.PtrSize
-		case read.FieldKindEface:
-			// TODO: the type part
-			typ = "interface{}"
-			if len(edges) > 0 && edges[0].FromOffset == off+d.PtrSize {
-				value = edgeLink(edges[0])
-				edges = edges[1:]
-			} else {
-				// TODO: use type to decide whether this is a
-				// pointer or a scalar.
-				value = nonheapPtr(b[off+d.PtrSize:])
-			}
-			off += 2 * d.PtrSize
-		case read.FieldKindString:
-			typ = "string"
-			if len(edges) > 0 && edges[0].FromOffset == off {
-				value = edgeLink(edges[0])
-				edges = edges[1:]
-			} else {
-				value = nonheapPtr(b[off:])
-			}
-			value = fmt.Sprintf("%s/%d", value, readPtr(b[off+d.PtrSize:]))
-			off += 2 * d.PtrSize
-		case read.FieldKindSlice:
-			typ = "[]" + f.BaseType
-			if len(edges) > 0 && edges[0].FromOffset == off {
-				value = edgeLink(edges[0])
-				edges = edges[1:]
-			} else {
-				value = nonheapPtr(b[off:])
-			}
-			value = fmt.Sprintf("%s/%d/%d", value, readPtr(b[off+d.PtrSize:]), readPtr(b[off+2*d.PtrSize:]))
-			off += 3 * d.PtrSize
-		case read.FieldKindBytesElided:
-			typ = "raw bytes"
-			value = fmt.Sprintf("... %d elided bytes ...", uint64(len(b))-off)
-			off = uint64(len(b))
-		}
-		r = append(r, Field{f.Name, typ, value})
-	}
-	if uint64(len(b)) > off {
-		r = append(r, Field{fmt.Sprintf("<font color=LightGray>sizeclass pad %d</font>", uint64(len(b))-off), "", ""})
-	}
-	return r
+    var r []Field
+    off := uint64(0)
+    for _, f := range fields {
+        if f.Offset < off {
+            log.Fatal("out of order fields")
+        }
+        if f.Offset > off {
+            r = append(r, Field{fmt.Sprintf("<font color=LightGray>pad %d</font>", f.Offset-off), "", ""})
+            off = f.Offset
+        }
+        var value string
+        var typ string
+        switch f.Kind {
+        case read.FieldKindBool:
+            if b[off] == 0 {
+                value = "false"
+            } else {
+                value = "true"
+            }
+            typ = "bool"
+            off++
+        case read.FieldKindUInt8:
+            value = fmt.Sprintf("%d", b[off])
+            typ = "uint8"
+            off++
+        case read.FieldKindSInt8:
+            value = fmt.Sprintf("%d", int8(b[off]))
+            typ = "int8"
+            off++
+        case read.FieldKindUInt16:
+            value = fmt.Sprintf("%d", d.Order.Uint16(b[off:]))
+            typ = "uint16"
+            off += 2
+        case read.FieldKindSInt16:
+            value = fmt.Sprintf("%d", int16(d.Order.Uint16(b[off:])))
+            typ = "int16"
+            off += 2
+        case read.FieldKindUInt32:
+            value = fmt.Sprintf("%d", d.Order.Uint32(b[off:]))
+            typ = "uint32"
+            off += 4
+        case read.FieldKindSInt32:
+            value = fmt.Sprintf("%d", int32(d.Order.Uint32(b[off:])))
+            typ = "int32"
+            off += 4
+        case read.FieldKindUInt64:
+            value = fmt.Sprintf("%d", d.Order.Uint64(b[off:]))
+            typ = "uint64"
+            off += 8
+        case read.FieldKindSInt64:
+            value = fmt.Sprintf("%d", int64(d.Order.Uint64(b[off:])))
+            typ = "int64"
+            off += 8
+        case read.FieldKindBytes8:
+            value = rawBytes(b[off : off+8])
+            typ = "raw bytes"
+            off += 8
+        case read.FieldKindBytes16:
+            value = rawBytes(b[off : off+16])
+            typ = "raw bytes"
+            off += 16
+        case read.FieldKindPtr:
+            typ = "*" + f.BaseType
+            // TODO: get ptr base type somehow?  Also for slices,chans.
+            if len(edges) > 0 && edges[0].FromOffset == off {
+                value = edgeLink(edges[0])
+                edges = edges[1:]
+            } else {
+                value = nonheapPtr(b[off:])
+            }
+            off += d.PtrSize
+        case read.FieldKindIface:
+            // TODO: the itab part?
+            typ = "interface{...}" + f.BaseType
+            if len(edges) > 0 && edges[0].FromOffset == off+d.PtrSize {
+                value = edgeLink(edges[0])
+                edges = edges[1:]
+            } else {
+                // TODO: use itab to decide whether this is a
+                // pointer or a scalar.
+                value = nonheapPtr(b[off+d.PtrSize:])
+            }
+            off += 2 * d.PtrSize
+        case read.FieldKindEface:
+            // TODO: the type part
+            typ = "interface{}"
+            if len(edges) > 0 && edges[0].FromOffset == off+d.PtrSize {
+                value = edgeLink(edges[0])
+                edges = edges[1:]
+            } else {
+                // TODO: use type to decide whether this is a
+                // pointer or a scalar.
+                value = nonheapPtr(b[off+d.PtrSize:])
+            }
+            off += 2 * d.PtrSize
+        case read.FieldKindString:
+            typ = "string"
+            if len(edges) > 0 && edges[0].FromOffset == off {
+                value = edgeLink(edges[0])
+                edges = edges[1:]
+            } else {
+                value = nonheapPtr(b[off:])
+            }
+            value = fmt.Sprintf("%s/%d", value, readPtr(b[off+d.PtrSize:]))
+            off += 2 * d.PtrSize
+        case read.FieldKindSlice:
+            typ = "[]" + f.BaseType
+            if len(edges) > 0 && edges[0].FromOffset == off {
+                value = edgeLink(edges[0])
+                edges = edges[1:]
+            } else {
+                value = nonheapPtr(b[off:])
+            }
+            value = fmt.Sprintf("%s/%d/%d", value, readPtr(b[off+d.PtrSize:]), readPtr(b[off+2*d.PtrSize:]))
+            off += 3 * d.PtrSize
+        case read.FieldKindBytesElided:
+            typ = "raw bytes"
+            value = fmt.Sprintf("... %d elided bytes ...", uint64(len(b))-off)
+            off = uint64(len(b))
+        }
+        r = append(r, Field{f.Name, typ, value})
+    }
+    if uint64(len(b)) > off {
+        r = append(r, Field{fmt.Sprintf("<font color=LightGray>sizeclass pad %d</font>", uint64(len(b))-off), "", ""})
+    }
+    return r
 }
 
 type objInfo struct {
-	Addr      uint64
-	Typ       string
-	Size      uint64
-	Fields    []Field
-	Referrers []string
-	Dominates uint64
+    Addr      uint64
+    Typ       string
+    Size      uint64
+    Fields    []Field
+    Referrers []string
+    Dominates uint64
 }
 
 var objTemplate = template.Must(template.New("obj").Parse(`
@@ -276,59 +276,59 @@ border:1px solid grey;
 `))
 
 func objHandler(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	v := q["id"]
-	if len(v) != 1 {
-		http.Error(w, "id parameter missing", 405)
-		return
-	}
-	id, err := strconv.ParseUint(v[0], 10, 64)
-	if err != nil {
-		http.Error(w, err.Error(), 405)
-		return
-	}
+    q := r.URL.Query()
+    v := q["id"]
+    if len(v) != 1 {
+        http.Error(w, "id parameter missing", 405)
+        return
+    }
+    id, err := strconv.ParseUint(v[0], 10, 64)
+    if err != nil {
+        http.Error(w, err.Error(), 405)
+        return
+    }
 
-	if int(id) >= d.NumObjects() {
-		http.Error(w, "object not found", 405)
-		return
-	}
-	x := read.ObjId(id)
+    if int(id) >= d.NumObjects() {
+        http.Error(w, "object not found", 405)
+        return
+    }
+    x := read.ObjId(id)
 
-	fld := getFields(d.Contents(x), d.Ft(x).Fields, d.Edges(x))
-	if len(fld) > maxFields {
-		msg := fmt.Sprintf("<font color=Red>elided for display: %d fields</font>", len(fld)-(maxFields-1))
-		fld = fld[:maxFields-1]
-		fld = append(fld, Field{msg, "", ""})
-	}
+    fld := getFields(d.Contents(x), d.Ft(x).Fields, d.Edges(x))
+    if len(fld) > maxFields {
+        msg := fmt.Sprintf("<font color=Red>elided for display: %d fields</font>", len(fld)-(maxFields-1))
+        fld = fld[:maxFields-1]
+        fld = append(fld, Field{msg, "", ""})
+    }
 
-	ref := getReferrers(x)
-	if len(ref) > maxFields {
-		msg := fmt.Sprintf("<font color=Red>elided for display: %d referrers</font>", len(ref)-(maxFields-1))
-		ref = ref[:maxFields-1]
-		ref = append(ref, msg)
-	}
+    ref := getReferrers(x)
+    if len(ref) > maxFields {
+        msg := fmt.Sprintf("<font color=Red>elided for display: %d referrers</font>", len(ref)-(maxFields-1))
+        ref = ref[:maxFields-1]
+        ref = append(ref, msg)
+    }
 
-	info := objInfo{
-		d.Addr(x),
-		typeLink(d.Ft(x)),
-		d.Size(x),
-		fld,
-		ref,
-		domsize[x],
-	}
-	if err := objTemplate.Execute(w, info); err != nil {
-		log.Print(err)
-	}
+    info := objInfo{
+        d.Addr(x),
+        typeLink(d.Ft(x)),
+        d.Size(x),
+        fld,
+        ref,
+        domsize[x],
+    }
+    if err := objTemplate.Execute(w, info); err != nil {
+        log.Print(err)
+    }
 }
 
 type objEntry struct {
-	Id   read.ObjId
-	Addr uint64
+    Id   read.ObjId
+    Addr uint64
 }
 type typeInfo struct {
-	Name      string
-	Size      uint64
-	Instances []string
+    Name      string
+    Size      uint64
+    Instances []string
 }
 
 var typeTemplate = template.Must(template.New("type").Parse(`
@@ -352,39 +352,39 @@ var typeTemplate = template.Must(template.New("type").Parse(`
 `))
 
 func typeHandler(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	s := q["id"]
-	if len(s) != 1 {
-		http.Error(w, "type id missing", 405)
-		return
-	}
-	id, err := strconv.ParseUint(s[0], 10, 64)
-	if err != nil {
-		http.Error(w, err.Error(), 405)
-		return
-	}
+    q := r.URL.Query()
+    s := q["id"]
+    if len(s) != 1 {
+        http.Error(w, "type id missing", 405)
+        return
+    }
+    id, err := strconv.ParseUint(s[0], 10, 64)
+    if err != nil {
+        http.Error(w, err.Error(), 405)
+        return
+    }
 
-	if id >= uint64(len(d.FTList)) {
-		http.Error(w, "can't find type", 405)
-		return
-	}
+    if id >= uint64(len(d.FTList)) {
+        http.Error(w, "can't find type", 405)
+        return
+    }
 
-	ft := d.FTList[id]
-	var info typeInfo
-	info.Name = ft.Name
-	info.Size = ft.Size
-	for _, x := range byType[ft.Id].objects {
-		info.Instances = append(info.Instances, objLink(x))
-	}
-	if err := typeTemplate.Execute(w, info); err != nil {
-		log.Print(err)
-	}
+    ft := d.FTList[id]
+    var info typeInfo
+    info.Name = ft.Name
+    info.Size = ft.Size
+    for _, x := range byType[ft.Id].objects {
+        info.Instances = append(info.Instances, objLink(x))
+    }
+    if err := typeTemplate.Execute(w, info); err != nil {
+        log.Print(err)
+    }
 }
 
 type hentry struct {
-	Name  string
-	Count int
-	Bytes uint64
+    Name  string
+    Count int
+    Bytes uint64
 }
 
 var histoTemplate = template.Must(template.New("histo").Parse(`
@@ -427,17 +427,17 @@ border:1px solid grey;
 `))
 
 func histoHandler(w http.ResponseWriter, r *http.Request) {
-	// build sorted list of types
-	var s []hentry
-	for id, b := range byType {
-		ft := d.FTList[id]
-		s = append(s, hentry{typeLink(ft), len(b.objects), b.bytes})
-	}
-	sort.Sort(ByBytes(s))
+    // build sorted list of types
+    var s []hentry
+    for id, b := range byType {
+        ft := d.FTList[id]
+        s = append(s, hentry{typeLink(ft), len(b.objects), b.bytes})
+    }
+    sort.Sort(ByBytes(s))
 
-	if err := histoTemplate.Execute(w, s); err != nil {
-		log.Print(err)
-	}
+    if err := histoTemplate.Execute(w, s); err != nil {
+        log.Print(err)
+    }
 }
 
 type ByBytes []hentry
@@ -447,9 +447,9 @@ func (a ByBytes) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByBytes) Less(i, j int) bool { return a[i].Bytes > a[j].Bytes }
 
 type mainInfo struct {
-	HeapSize   uint64
-	HeapUsed   uint64
-	NumObjects int
+    HeapSize   uint64
+    HeapUsed   uint64
+    NumObjects int
 }
 
 var mainTemplate = template.Must(template.New("histo").Parse(`
@@ -478,10 +478,10 @@ Heap objects: {{.NumObjects}}
 `))
 
 func mainHandler(w http.ResponseWriter, r *http.Request) {
-	i := mainInfo{d.HeapEnd - d.HeapStart, d.Memstats.Alloc, d.NumObjects()}
-	if err := mainTemplate.Execute(w, i); err != nil {
-		log.Print(err)
-	}
+    i := mainInfo{d.HeapEnd - d.HeapStart, d.Memstats.Alloc, d.NumObjects()}
+    if err := mainTemplate.Execute(w, i); err != nil {
+        log.Print(err)
+    }
 }
 
 var globalsTemplate = template.Must(template.New("globals").Parse(`
@@ -522,13 +522,13 @@ border:1px solid grey;
 `))
 
 func globalsHandler(w http.ResponseWriter, r *http.Request) {
-	var f []Field
-	for _, x := range []*read.Data{d.Data, d.Bss} {
-		f = append(f, getFields(x.Data, x.Fields, x.Edges)...)
-	}
-	if err := globalsTemplate.Execute(w, f); err != nil {
-		log.Print(err)
-	}
+    var f []Field
+    for _, x := range []*read.Data{d.Data, d.Bss} {
+        f = append(f, getFields(x.Data, x.Fields, x.Edges)...)
+    }
+    if err := globalsTemplate.Execute(w, f); err != nil {
+        log.Print(err)
+    }
 }
 
 var othersTemplate = template.Must(template.New("others").Parse(`
@@ -569,20 +569,20 @@ border:1px solid grey;
 `))
 
 func othersHandler(w http.ResponseWriter, r *http.Request) {
-	var f []Field
-	for _, x := range d.Otherroots {
-		for _, e := range x.Edges {
-			f = append(f, Field{x.Description, "unknown", edgeLink(e)})
-		}
-	}
-	if err := othersTemplate.Execute(w, f); err != nil {
-		log.Print(err)
-	}
+    var f []Field
+    for _, x := range d.Otherroots {
+        for _, e := range x.Edges {
+            f = append(f, Field{x.Description, "unknown", edgeLink(e)})
+        }
+    }
+    if err := othersTemplate.Execute(w, f); err != nil {
+        log.Print(err)
+    }
 }
 
 type goListInfo struct {
-	Name  string
-	State string
+    Name  string
+    State string
 }
 
 var goListTemplate = template.Must(template.New("golist").Parse(`
@@ -621,34 +621,34 @@ border:1px solid grey;
 `))
 
 func goListHandler(w http.ResponseWriter, r *http.Request) {
-	var i []goListInfo
-	for _, g := range d.Goroutines {
-		name := fmt.Sprintf("<a href=go?id=%x>goroutine %x</a>", g.Addr, g.Addr)
-		var state string
-		switch g.Status {
-		case 0:
-			state = "idle"
-		case 1:
-			state = "runnable"
-		case 2:
-			// running - shouldn't happen
-			log.Fatal("found running goroutine in heap dump")
-		case 3:
-			state = "syscall"
-		case 4:
-			state = g.WaitReason
-		case 5:
-			state = "dead"
-		default:
-			log.Fatal("unknown goroutine status")
-		}
-		i = append(i, goListInfo{name, state})
-	}
-	// sort by state
-	sort.Sort(ByState(i))
-	if err := goListTemplate.Execute(w, i); err != nil {
-		log.Print(err)
-	}
+    var i []goListInfo
+    for _, g := range d.Goroutines {
+        name := fmt.Sprintf("<a href=go?id=%x>goroutine %x</a>", g.Addr, g.Addr)
+        var state string
+        switch g.Status {
+        case 0:
+            state = "idle"
+        case 1:
+            state = "runnable"
+        case 2:
+            // running - shouldn't happen
+            log.Fatal("found running goroutine in heap dump")
+        case 3:
+            state = "syscall"
+        case 4:
+            state = g.WaitReason
+        case 5:
+            state = "dead"
+        default:
+            log.Fatal("unknown goroutine status")
+        }
+        i = append(i, goListInfo{name, state})
+    }
+    // sort by state
+    sort.Sort(ByState(i))
+    if err := goListTemplate.Execute(w, i); err != nil {
+        log.Print(err)
+    }
 }
 
 type ByState []goListInfo
@@ -658,10 +658,10 @@ func (a ByState) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByState) Less(i, j int) bool { return a[i].State < a[j].State }
 
 type goInfo struct {
-	Addr   uint64
-	Obj    read.ObjId
-	State  string
-	Frames []string
+    Addr   uint64
+    Obj    read.ObjId
+    State  string
+    Frames []string
 }
 
 var goTemplate = template.Must(template.New("go").Parse(`
@@ -694,65 +694,65 @@ border:1px solid grey;
 `))
 
 func goHandler(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	v := q["id"]
-	if len(v) != 1 {
-		http.Error(w, "id parameter missing", 405)
-		return
-	}
-	addr, err := strconv.ParseUint(v[0], 16, 64)
-	if err != nil {
-		http.Error(w, err.Error(), 405)
-		return
-	}
-	var g *read.GoRoutine
-	for _, x := range d.Goroutines {
-		if x.Addr == addr {
-			g = x
-			break
-		}
-	}
-	if g == nil {
-		http.Error(w, "goroutine not found", 405)
-		return
-	}
+    q := r.URL.Query()
+    v := q["id"]
+    if len(v) != 1 {
+        http.Error(w, "id parameter missing", 405)
+        return
+    }
+    addr, err := strconv.ParseUint(v[0], 16, 64)
+    if err != nil {
+        http.Error(w, err.Error(), 405)
+        return
+    }
+    var g *read.GoRoutine
+    for _, x := range d.Goroutines {
+        if x.Addr == addr {
+            g = x
+            break
+        }
+    }
+    if g == nil {
+        http.Error(w, "goroutine not found", 405)
+        return
+    }
 
-	var i goInfo
-	i.Addr = g.Addr
-	i.Obj = d.FindObj(g.Addr)
-	switch g.Status {
-	case 0:
-		i.State = "idle"
-	case 1:
-		i.State = "runnable"
-	case 2:
-		// running - shouldn't happen
-		log.Fatal("found running goroutine in heap dump")
-	case 3:
-		i.State = "syscall"
-	case 4:
-		i.State = g.WaitReason
-	case 5:
-		i.State = "dead"
-	default:
-		log.Fatal("unknown goroutine status")
-	}
+    var i goInfo
+    i.Addr = g.Addr
+    i.Obj = d.FindObj(g.Addr)
+    switch g.Status {
+    case 0:
+        i.State = "idle"
+    case 1:
+        i.State = "runnable"
+    case 2:
+        // running - shouldn't happen
+        log.Fatal("found running goroutine in heap dump")
+    case 3:
+        i.State = "syscall"
+    case 4:
+        i.State = g.WaitReason
+    case 5:
+        i.State = "dead"
+    default:
+        log.Fatal("unknown goroutine status")
+    }
 
-	for f := g.Bos; f != nil; f = f.Parent {
-		i.Frames = append(i.Frames, fmt.Sprintf("<a href=frame?id=%x&depth=%d>%s</a>", f.Addr, f.Depth, f.Name))
-	}
+    for f := g.Bos; f != nil; f = f.Parent {
+        i.Frames = append(i.Frames, fmt.Sprintf("<a href=frame?id=%x&depth=%d>%s</a>", f.Addr, f.Depth, f.Name))
+    }
 
-	if err := goTemplate.Execute(w, i); err != nil {
-		log.Print(err)
-	}
+    if err := goTemplate.Execute(w, i); err != nil {
+        log.Print(err)
+    }
 }
 
 type frameInfo struct {
-	Addr      uint64
-	Name      string
-	Depth     uint64
-	Goroutine string
-	Vars      []Field
+    Addr      uint64
+    Name      string
+    Depth     uint64
+    Goroutine string
+    Vars      []Field
 }
 
 var frameTemplate = template.Must(template.New("frame").Parse(`
@@ -795,111 +795,111 @@ border:1px solid grey;
 `))
 
 func frameHandler(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	v := q["id"]
-	if len(v) != 1 {
-		http.Error(w, "id parameter missing", 405)
-		return
-	}
-	addr, err := strconv.ParseUint(v[0], 16, 64)
-	if err != nil {
-		http.Error(w, err.Error(), 405)
-		return
-	}
-	z := q["depth"]
-	if len(z) != 1 {
-		http.Error(w, "depth parameter missing", 405)
-		return
-	}
-	depth, err := strconv.ParseUint(z[0], 10, 64)
-	if err != nil {
-		http.Error(w, err.Error(), 405)
-		return
-	}
+    q := r.URL.Query()
+    v := q["id"]
+    if len(v) != 1 {
+        http.Error(w, "id parameter missing", 405)
+        return
+    }
+    addr, err := strconv.ParseUint(v[0], 16, 64)
+    if err != nil {
+        http.Error(w, err.Error(), 405)
+        return
+    }
+    z := q["depth"]
+    if len(z) != 1 {
+        http.Error(w, "depth parameter missing", 405)
+        return
+    }
+    depth, err := strconv.ParseUint(z[0], 10, 64)
+    if err != nil {
+        http.Error(w, err.Error(), 405)
+        return
+    }
 
-	var f *read.StackFrame
-	for _, g := range d.Frames {
-		if g.Addr == addr && g.Depth == depth {
-			f = g
-			break
-		}
-	}
-	if f == nil {
-		http.Error(w, "stack frame not found", 405)
-		return
-	}
+    var f *read.StackFrame
+    for _, g := range d.Frames {
+        if g.Addr == addr && g.Depth == depth {
+            f = g
+            break
+        }
+    }
+    if f == nil {
+        http.Error(w, "stack frame not found", 405)
+        return
+    }
 
-	var i frameInfo
-	i.Addr = f.Addr
-	i.Name = f.Name
-	i.Depth = f.Depth
-	i.Goroutine = fmt.Sprintf("<a href=go?id=%x>goroutine %x</a>", f.Goroutine.Addr, f.Goroutine.Addr)
+    var i frameInfo
+    i.Addr = f.Addr
+    i.Name = f.Name
+    i.Depth = f.Depth
+    i.Goroutine = fmt.Sprintf("<a href=go?id=%x>goroutine %x</a>", f.Goroutine.Addr, f.Goroutine.Addr)
 
-	// variables
-	i.Vars = getFields(f.Data, f.Fields, f.Edges)
+    // variables
+    i.Vars = getFields(f.Data, f.Fields, f.Edges)
 
-	if err := frameTemplate.Execute(w, i); err != nil {
-		log.Print(err)
-	}
+    if err := frameTemplate.Execute(w, i); err != nil {
+        log.Print(err)
+    }
 }
 
 // So meta.
 func heapdumpHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := os.Create("metadump")
-	if err != nil {
-		panic(err)
-	}
-	runtime.GC()
-	debug.WriteHeapDump(f.Fd())
-	f.Close()
-	w.Write([]byte("done"))
+    f, err := os.Create("metadump")
+    if err != nil {
+        panic(err)
+    }
+    runtime.GC()
+    debug.WriteHeapDump(f.Fd())
+    f.Close()
+    w.Write([]byte("done"))
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr,
-		"usage: hview heapdump [executable]\n")
-	flag.PrintDefaults()
-	os.Exit(2)
+    fmt.Fprintf(os.Stderr,
+        "usage: hview heapdump [executable]\n")
+    flag.PrintDefaults()
+    os.Exit(2)
 }
 
 func main() {
-	flag.Usage = usage
-	flag.Parse()
+    flag.Usage = usage
+    flag.Parse()
 
-	var dump, exec string
-	args := flag.Args()
-	switch len(args) {
-	case 1:
-		dump = args[0]
-		exec = ""
-	case 2:
-		dump = args[0]
-		exec = args[1]
-	default:
-		usage()
-		return
-	}
+    var dump, exec string
+    args := flag.Args()
+    switch len(args) {
+    case 1:
+        dump = args[0]
+        exec = ""
+    case 2:
+        dump = args[0]
+        exec = args[1]
+    default:
+        usage()
+        return
+    }
 
-	fmt.Println("Loading...")
-	d = read.Read(dump, exec)
+    fmt.Println("Loading...")
+    d = read.Read(dump, exec)
 
-	fmt.Println("Analyzing...")
-	prepare()
+    fmt.Println("Analyzing...")
+    prepare()
 
-	fmt.Println("Ready.  Point your browser to localhost" + *httpAddr)
-	http.HandleFunc("/", mainHandler)
-	http.HandleFunc("/obj", objHandler)
-	http.HandleFunc("/type", typeHandler)
-	http.HandleFunc("/histo", histoHandler)
-	http.HandleFunc("/globals", globalsHandler)
-	http.HandleFunc("/goroutines", goListHandler)
-	http.HandleFunc("/go", goHandler)
-	http.HandleFunc("/frame", frameHandler)
-	http.HandleFunc("/others", othersHandler)
-	http.HandleFunc("/heapdump", heapdumpHandler)
-	if err := http.ListenAndServe(*httpAddr, nil); err != nil {
-		log.Fatal(err)
-	}
+    fmt.Println("Ready.  Point your browser to localhost" + *httpAddr)
+    http.HandleFunc("/", mainHandler)
+    http.HandleFunc("/obj", objHandler)
+    http.HandleFunc("/type", typeHandler)
+    http.HandleFunc("/histo", histoHandler)
+    http.HandleFunc("/globals", globalsHandler)
+    http.HandleFunc("/goroutines", goListHandler)
+    http.HandleFunc("/go", goHandler)
+    http.HandleFunc("/frame", frameHandler)
+    http.HandleFunc("/others", othersHandler)
+    http.HandleFunc("/heapdump", heapdumpHandler)
+    if err := http.ListenAndServe(*httpAddr, nil); err != nil {
+        log.Fatal(err)
+    }
 }
 
 // Map from object ID to list of objects that refer to that object.
@@ -911,225 +911,225 @@ var ref1 []read.ObjId
 var ref2 map[read.ObjId][]read.ObjId
 
 func getReferrers(x read.ObjId) []string {
-	var r []string
-	if y := ref1[x]; y != read.ObjNil {
-		for _, e := range d.Edges(y) {
-			if e.To == x {
-				r = append(r, edgeSource(y, e))
-			}
-		}
-		for _, y := range ref2[x] {
-			for _, e := range d.Edges(y) {
-				if e.To == x {
-					r = append(r, edgeSource(y, e))
-				}
-			}
-		}
-	}
-	for _, s := range []*read.Data{d.Data, d.Bss} {
-		for _, e := range s.Edges {
-			if e.To != x {
-				continue
-			}
-			r = append(r, "global "+e.FieldName)
-		}
-	}
-	for _, f := range d.Frames {
-		for _, e := range f.Edges {
-			if e.To == x {
-				r = append(r, fmt.Sprintf("<a href=frame?id=%x&depth=%d>%s</a>.%s", f.Addr, f.Depth, f.Name, e.FieldName))
-			}
-		}
-	}
-	for _, s := range d.Otherroots {
-		for _, e := range s.Edges {
-			if e.To == x {
-				r = append(r, s.Description)
-			}
-		}
-	}
-	return r
+    var r []string
+    if y := ref1[x]; y != read.ObjNil {
+        for _, e := range d.Edges(y) {
+            if e.To == x {
+                r = append(r, edgeSource(y, e))
+            }
+        }
+        for _, y := range ref2[x] {
+            for _, e := range d.Edges(y) {
+                if e.To == x {
+                    r = append(r, edgeSource(y, e))
+                }
+            }
+        }
+    }
+    for _, s := range []*read.Data{d.Data, d.Bss} {
+        for _, e := range s.Edges {
+            if e.To != x {
+                continue
+            }
+            r = append(r, "global "+e.FieldName)
+        }
+    }
+    for _, f := range d.Frames {
+        for _, e := range f.Edges {
+            if e.To == x {
+                r = append(r, fmt.Sprintf("<a href=frame?id=%x&depth=%d>%s</a>.%s", f.Addr, f.Depth, f.Name, e.FieldName))
+            }
+        }
+    }
+    for _, s := range d.Otherroots {
+        for _, e := range s.Edges {
+            if e.To == x {
+                r = append(r, s.Description)
+            }
+        }
+    }
+    return r
 }
 
 type bucket struct {
-	bytes   uint64
-	objects []read.ObjId
+    bytes   uint64
+    objects []read.ObjId
 }
 
 // histogram by full type id
 var byType []bucket
 
 func prepare() {
-	// group objects by type
-	byType = make([]bucket, len(d.FTList))
-	for i := 0; i < d.NumObjects(); i++ {
-		x := read.ObjId(i)
-		tid := d.Ft(x).Id
-		b := byType[tid]
-		b.bytes += d.Size(x)
-		b.objects = append(b.objects, x)
-		byType[tid] = b
-	}
+    // group objects by type
+    byType = make([]bucket, len(d.FTList))
+    for i := 0; i < d.NumObjects(); i++ {
+        x := read.ObjId(i)
+        tid := d.Ft(x).Id
+        b := byType[tid]
+        b.bytes += d.Size(x)
+        b.objects = append(b.objects, x)
+        byType[tid] = b
+    }
 
-	// compute referrers
-	ref1 = make([]read.ObjId, d.NumObjects())
-	for i := 0; i < d.NumObjects(); i++ {
-		ref1[i] = read.ObjNil
-	}
-	ref2 = map[read.ObjId][]read.ObjId{}
-	for i := 0; i < d.NumObjects(); i++ {
-		x := read.ObjId(i)
-		for _, e := range d.Edges(x) {
-			r := ref1[e.To]
-			if r == read.ObjNil {
-				ref1[e.To] = x
-			} else if x != r {
-				s := ref2[e.To]
-				if len(s) == 0 || x != s[len(s)-1] {
-					ref2[e.To] = append(s, x)
-				}
-			}
-		}
-	}
+    // compute referrers
+    ref1 = make([]read.ObjId, d.NumObjects())
+    for i := 0; i < d.NumObjects(); i++ {
+        ref1[i] = read.ObjNil
+    }
+    ref2 = map[read.ObjId][]read.ObjId{}
+    for i := 0; i < d.NumObjects(); i++ {
+        x := read.ObjId(i)
+        for _, e := range d.Edges(x) {
+            r := ref1[e.To]
+            if r == read.ObjNil {
+                ref1[e.To] = x
+            } else if x != r {
+                s := ref2[e.To]
+                if len(s) == 0 || x != s[len(s)-1] {
+                    ref2[e.To] = append(s, x)
+                }
+            }
+        }
+    }
 
-	dom()
+    dom()
 }
 
 // map from object ID to the size of the heap that is dominated by that object.
 var domsize []uint64
 
 func dom() {
-	fmt.Println("Computing dominators...")
-	n := d.NumObjects()
+    fmt.Println("Computing dominators...")
+    n := d.NumObjects()
 
-	// make list of roots
-	// TODO: have loader compute this?
-	roots := map[read.ObjId]struct{}{}
-	for _, s := range []*read.Data{d.Data, d.Bss} {
-		for _, e := range s.Edges {
-			roots[e.To] = struct{}{}
-		}
-	}
-	for _, f := range d.Frames {
-		for _, e := range f.Edges {
-			roots[e.To] = struct{}{}
-		}
-	}
-	for _, x := range d.Otherroots {
-		for _, e := range x.Edges {
-			roots[e.To] = struct{}{}
-		}
-	}
+    // make list of roots
+    // TODO: have loader compute this?
+    roots := map[read.ObjId]struct{}{}
+    for _, s := range []*read.Data{d.Data, d.Bss} {
+        for _, e := range s.Edges {
+            roots[e.To] = struct{}{}
+        }
+    }
+    for _, f := range d.Frames {
+        for _, e := range f.Edges {
+            roots[e.To] = struct{}{}
+        }
+    }
+    for _, x := range d.Otherroots {
+        for _, e := range x.Edges {
+            roots[e.To] = struct{}{}
+        }
+    }
 
-	// compute postorder traversal
-	// object states:
-	// 0 - not seen yet
-	// 1 - seen, added to queue, not yet expanded children
-	// 2 - seen, already expanded children
-	// 3 - added to postorder
-	postorder := make([]read.ObjId, 0, n)
-	postnum := make([]int, n+1)
-	state := make([]byte, n)
-	var q []read.ObjId // stack of work to do, holds state 1 and 2 objects
-	for x := range roots {
-		if state[x] != 0 {
-			if state[x] != 3 {
-				log.Fatal("bad state found")
-			}
-			continue
-		}
-		state[x] = 1
-		q = q[:0]
-		q = append(q, x)
-		for len(q) > 0 {
-			y := q[len(q)-1]
-			if state[y] == 2 {
-				state[y] = 3
-				q = q[:len(q)-1]
-				postnum[y] = len(postorder)
-				postorder = append(postorder, y)
-			} else {
-				if state[y] != 1 {
-					log.Fatal("bad state")
-				}
-				state[y] = 2
-				for _, e := range d.Edges(y) {
-					z := e.To
-					if state[z] == 0 {
-						state[z] = 1
-						q = append(q, z)
-					}
-				}
-			}
-		}
-	}
-	postnum[n] = n // virtual start node
+    // compute postorder traversal
+    // object states:
+    // 0 - not seen yet
+    // 1 - seen, added to queue, not yet expanded children
+    // 2 - seen, already expanded children
+    // 3 - added to postorder
+    postorder := make([]read.ObjId, 0, n)
+    postnum := make([]int, n+1)
+    state := make([]byte, n)
+    var q []read.ObjId // stack of work to do, holds state 1 and 2 objects
+    for x := range roots {
+        if state[x] != 0 {
+            if state[x] != 3 {
+                log.Fatal("bad state found")
+            }
+            continue
+        }
+        state[x] = 1
+        q = q[:0]
+        q = append(q, x)
+        for len(q) > 0 {
+            y := q[len(q)-1]
+            if state[y] == 2 {
+                state[y] = 3
+                q = q[:len(q)-1]
+                postnum[y] = len(postorder)
+                postorder = append(postorder, y)
+            } else {
+                if state[y] != 1 {
+                    log.Fatal("bad state")
+                }
+                state[y] = 2
+                for _, e := range d.Edges(y) {
+                    z := e.To
+                    if state[z] == 0 {
+                        state[z] = 1
+                        q = append(q, z)
+                    }
+                }
+            }
+        }
+    }
+    postnum[n] = n // virtual start node
 
-	// compute immediate dominators
-	// http://www.hipersoft.rice.edu/grads/publications/dom14.pdf
-	idom := make([]read.ObjId, n+1)
-	for i := 0; i < n; i++ {
-		idom[i] = read.ObjNil
-	}
-	idom[n] = read.ObjId(n)
-	for r := range roots {
-		idom[r] = read.ObjId(n)
-	}
-	var redges []read.ObjId
-	change := true
-	for change {
-		change = false
-		for i := len(postorder) - 1; i >= 0; i-- {
-			x := postorder[i]
-			// get list of incoming edges
-			redges = redges[:0]
-			if ref1[x] != read.ObjNil {
-				redges = append(redges, ref1[x])
-				redges = append(redges, ref2[x]...)
-			}
-			a := read.ObjNil
-			for _, b := range redges {
-				if idom[b] == read.ObjNil {
-					continue
-				}
-				if a == read.ObjNil {
-					a = b
-					continue
-				}
-				for a != b {
-					if postnum[a] < postnum[b] {
-						a = idom[a]
-					} else {
-						b = idom[b]
-					}
-				}
-			}
-			if _, ok := roots[x]; ok {
-				a = read.ObjId(n)
-			}
-			if a != idom[x] {
-				idom[x] = a
-				change = true
-			}
-		}
-	}
+    // compute immediate dominators
+    // http://www.hipersoft.rice.edu/grads/publications/dom14.pdf
+    idom := make([]read.ObjId, n+1)
+    for i := 0; i < n; i++ {
+        idom[i] = read.ObjNil
+    }
+    idom[n] = read.ObjId(n)
+    for r := range roots {
+        idom[r] = read.ObjId(n)
+    }
+    var redges []read.ObjId
+    change := true
+    for change {
+        change = false
+        for i := len(postorder) - 1; i >= 0; i-- {
+            x := postorder[i]
+            // get list of incoming edges
+            redges = redges[:0]
+            if ref1[x] != read.ObjNil {
+                redges = append(redges, ref1[x])
+                redges = append(redges, ref2[x]...)
+            }
+            a := read.ObjNil
+            for _, b := range redges {
+                if idom[b] == read.ObjNil {
+                    continue
+                }
+                if a == read.ObjNil {
+                    a = b
+                    continue
+                }
+                for a != b {
+                    if postnum[a] < postnum[b] {
+                        a = idom[a]
+                    } else {
+                        b = idom[b]
+                    }
+                }
+            }
+            if _, ok := roots[x]; ok {
+                a = read.ObjId(n)
+            }
+            if a != idom[x] {
+                idom[x] = a
+                change = true
+            }
+        }
+    }
 
-	domsize = make([]uint64, n+1)
-	for _, x := range postorder {
-		domsize[x] += d.Size(x)
-		domsize[idom[x]] += domsize[x]
-	}
-	// Note: unreachable objects will have domsize of 0.
+    domsize = make([]uint64, n+1)
+    for _, x := range postorder {
+        domsize[x] += d.Size(x)
+        domsize[idom[x]] += domsize[x]
+    }
+    // Note: unreachable objects will have domsize of 0.
 }
 
 func readPtr(b []byte) uint64 {
-	switch d.PtrSize {
-	case 4:
-		return uint64(d.Order.Uint32(b))
-	case 8:
-		return d.Order.Uint64(b)
-	default:
-		log.Fatal("unsupported PtrSize=%d", d.PtrSize)
-		return 0
-	}
+    switch d.PtrSize {
+    case 4:
+        return uint64(d.Order.Uint32(b))
+    case 8:
+        return d.Order.Uint64(b)
+    default:
+        log.Fatal("unsupported PtrSize=%d", d.PtrSize)
+        return 0
+    }
 }
