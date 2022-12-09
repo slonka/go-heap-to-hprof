@@ -84,7 +84,7 @@ const (
     // Size of buckets for FindObj.  Bigger buckets use less memory
     // but make FindObj take longer.  512 byte buckets use about 1.5%
     // of the total heap size and require us to look at at most
-    // 64 objects.
+    // 64 Objects.
     bucketSize = 512
 )
 
@@ -98,7 +98,7 @@ type Dump struct {
     Arch         string
     Ncpu         uint64
     Types        []*Type
-    objects      []object
+    Objects      []object
     Frames       []*StackFrame
     Goroutines   []*GoRoutine
     Otherroots   []*OtherRoot
@@ -129,7 +129,7 @@ type Dump struct {
     // map from the address of an interface to the address of the type
     ItabMap map[uint64]uint64
 
-    // Data structure for fast lookup of objects.  Divides the heap
+    // Data structure for fast lookup of Objects.  Divides the heap
     // into chunks of bucketSize bytes.  For each bucket, we keep
     // track of the lowest address object that has any of its
     // bytes in that bucket.
@@ -155,7 +155,7 @@ type FullType struct {
     Fields []Field
 }
 
-// An edge is a directed connection between two objects.  The source
+// An edge is a directed connection between two Objects.  The source
 // object is implicit.  An edge includes information about where it
 // leaves the source object and where it lands in the destination obj.
 type Edge struct {
@@ -181,23 +181,23 @@ const (
     ObjNil ObjId = -1
 )
 
-// NumObjects returns the number of objects in the heap.  Valid
+// NumObjects returns the number of Objects in the heap.  Valid
 // ObjIds for other calls are from 0 to NumObjects()-1.
 func (d *Dump) NumObjects() int {
-    return len(d.objects)
+    return len(d.Objects)
 }
 func (d *Dump) Contents(i ObjId) []byte {
-    x := d.objects[i]
+    x := d.Objects[i]
     return []byte(x.Contents)
 }
 func (d *Dump) Addr(x ObjId) uint64 {
-    return d.objects[x].Addr
+    return d.Objects[x].Addr
 }
 func (d *Dump) Size(x ObjId) uint64 {
     return uint64(len(d.Contents(x)))
 }
 func (d *Dump) Object(x ObjId) object {
-    return d.objects[x]
+    return d.Objects[x]
 }
 
 // FindObj returns the object id containing the address addr, or -1 if no object contains addr.
@@ -205,9 +205,9 @@ func (d *Dump) FindObj(addr uint64) ObjId {
     if addr < d.HeapStart || addr >= d.HeapEnd { // quick exit.  Includes nil.
         return ObjNil
     }
-    // linear search among all the objects that map to the same bucketSize-byte bucket.
-    for i := d.idx[(addr-d.HeapStart)/bucketSize]; i < ObjId(len(d.objects)); i++ {
-        x := &d.objects[i]
+    // linear search among all the Objects that map to the same bucketSize-byte bucket.
+    for i := d.idx[(addr-d.HeapStart)/bucketSize]; i < ObjId(len(d.Objects)); i++ {
+        x := &d.Objects[i]
         if addr < x.Addr {
             return ObjNil
         }
@@ -219,7 +219,7 @@ func (d *Dump) FindObj(addr uint64) ObjId {
 }
 
 func (d *Dump) Edges(i ObjId) []Edge {
-    x := &d.objects[i]
+    x := &d.Objects[i]
     e := d.edges[:0]
     b := d.Contents(i)
     for _, f := range x.Fields {
@@ -228,7 +228,7 @@ func (d *Dump) Edges(i ObjId) []Edge {
             p := readPtr(d, b[f.Offset:])
             y := d.FindObj(p)
             if y != ObjNil {
-                e = append(e, Edge{y, f.Offset, p - d.objects[y].Addr, f.Name})
+                e = append(e, Edge{y, f.Offset, p - d.Objects[y].Addr, f.Name})
             }
         case FieldKindEface:
             taddr := readPtr(d, b[f.Offset:])
@@ -241,7 +241,7 @@ func (d *Dump) Edges(i ObjId) []Edge {
                     p := readPtr(d, b[f.Offset+d.PtrSize:])
                     y := d.FindObj(p)
                     if y != ObjNil {
-                        e = append(e, Edge{y, f.Offset + d.PtrSize, p - d.objects[y].Addr, f.Name})
+                        e = append(e, Edge{y, f.Offset + d.PtrSize, p - d.Objects[y].Addr, f.Name})
                     }
                 }
             }
@@ -257,7 +257,7 @@ func (d *Dump) Edges(i ObjId) []Edge {
                     p := readPtr(d, b[f.Offset+d.PtrSize:])
                     y := d.FindObj(p)
                     if y != ObjNil {
-                        e = append(e, Edge{y, f.Offset + d.PtrSize, p - d.objects[y].Addr, f.Name})
+                        e = append(e, Edge{y, f.Offset + d.PtrSize, p - d.Objects[y].Addr, f.Name})
                     }
                 }
             }
@@ -497,7 +497,7 @@ func (d *Dump) makeFullType(typaddr uint64, kind TypeKind, size uint64) *FullTyp
         name = fmt.Sprintf("{%d}%s", size/t.Size, t.Name)
     case TypeKindChan:
         if d.HChanSize == 0 {
-            log.Fatal("hchansize must be before objects")
+            log.Fatal("hchansize must be before Objects")
         }
         if t.Size > 0 {
             name = fmt.Sprintf("chan{%d}%s", (size-d.HChanSize)/t.Size, t.Name)
@@ -542,7 +542,7 @@ func rawRead(filename string) *Dump {
             obj.Addr = readUint64(r)
             obj.Contents = readString(r)
             obj.Fields = readFields(r)
-            d.objects = append(d.objects, obj)
+            d.Objects = append(d.Objects, obj)
         case tagEOF:
             return &d
         case tagOtherRoot:
@@ -714,7 +714,7 @@ func rawRead(filename string) *Dump {
             log.Print("unknown record kind ", kind)
         }
     }
-    // TODO: any easy way to truncate the objects array?  We could
+    // TODO: any easy way to truncate the Objects array?  We could
     // reclaim the fraction that append() added but we didn't need.
 }
 
@@ -1052,7 +1052,11 @@ func typeMap(d *Dump, w *dwarf.Data) map[dwarf.Offset]dwarfType {
         case dwarf.TagMember:
             name := e.Val(dwarf.AttrName).(string)
             type_ := t[e.Val(dwarf.AttrType).(dwarf.Offset)]
-            loc := e.Val(dwarf.AttrDataMemberLoc).([]uint8)
+            locInt := e.Val(dwarf.AttrDataMemberLoc).(int64)
+            locUint64 := uint64(locInt)
+            loc := make([]uint8, 8)
+            binary.LittleEndian.PutUint64(loc, locUint64)
+
             var offset uint64
             if len(loc) == 0 {
                 offset = 0
@@ -1076,40 +1080,41 @@ type localKey struct {
 // Makes a map from <function name, distance before top of frame> to name of field.
 func localsMap(d *Dump, w *dwarf.Data, t map[dwarf.Offset]dwarfType) map[localKey]string {
     m := make(map[localKey]string, 0)
-    r := w.Reader()
-    var funcname string
-    for {
-        e, err := r.Next()
-        if err != nil {
-            log.Fatal(err)
-        }
-        if e == nil {
-            break
-        }
-        switch e.Tag {
-        case dwarf.TagSubprogram:
-            funcname = e.Val(dwarf.AttrName).(string)
-        case dwarf.TagVariable:
-            name := e.Val(dwarf.AttrName).(string)
-            typ := t[e.Val(dwarf.AttrType).(dwarf.Offset)]
-            loc := e.Val(dwarf.AttrLocation).([]uint8)
-            if len(loc) == 0 || loc[0] != dw_op_call_frame_cfa {
-                break
-            }
-            var offset int64
-            if len(loc) == 1 {
-                offset = 0
-            } else if len(loc) >= 3 && loc[1] == dw_op_consts && loc[len(loc)-1] == dw_op_plus {
-                loc, offset = readSleb(loc[2 : len(loc)-1])
-                if len(loc) != 0 {
-                    break
-                }
-            }
-            for _, f := range typ.Fields() {
-                m[localKey{funcname, uint64(-offset) - f.Offset}] = joinNames(name, f.Name)
-            }
-        }
-    }
+    //r := w.Reader()
+    //var funcname string
+    //for {
+    //    e, err := r.Next()
+    //    if err != nil {
+    //        log.Fatal(err)
+    //    }
+    //    if e == nil {
+    //        break
+    //    }
+    //    switch e.Tag {
+    //    case dwarf.TagSubprogram:
+    //        funcname = e.Val(dwarf.AttrName).(string)
+    //    case dwarf.TagVariable:
+    //        break
+    //name := e.Val(dwarf.AttrName).(string)
+    //typ := t[e.Val(dwarf.AttrType).(dwarf.Offset)]
+    //loc := e.Val(dwarf.AttrLocation).([]uint8)
+    //if len(loc) == 0 || loc[0] != dw_op_call_frame_cfa {
+    //    break
+    //}
+    //var offset int64
+    //if len(loc) == 1 {
+    //    offset = 0
+    //} else if len(loc) >= 3 && loc[1] == dw_op_consts && loc[len(loc)-1] == dw_op_plus {
+    //    loc, offset = readSleb(loc[2 : len(loc)-1])
+    //    if len(loc) != 0 {
+    //        break
+    //    }
+    //}
+    //for _, f := range typ.Fields() {
+    //    m[localKey{funcname, uint64(-offset) - f.Offset}] = joinNames(name, f.Name)
+    //}
+    //    }
+    //}
     return m
 }
 
@@ -1204,7 +1209,7 @@ func (d *Dump) appendEdge(edges []Edge, data []byte, off uint64, f Field) []Edge
     p := readPtr(d, data[off:])
     q := d.FindObj(p)
     if q != ObjNil {
-        edges = append(edges, Edge{q, off, p - d.objects[q].Addr, f.Name})
+        edges = append(edges, Edge{q, off, p - d.Objects[q].Addr, f.Name})
     }
     return edges
 }
@@ -1366,19 +1371,19 @@ func nameWithDwarf(d *Dump, execname string) {
 }
 
 func link(d *Dump) {
-    // sort objects in increasing address order
-    sort.Sort(byAddr(d.objects))
+    // sort Objects in increasing address order
+    sort.Sort(byAddr(d.Objects))
 
     // initialize index array
     d.idx = make([]ObjId, (d.HeapEnd-d.HeapStart+bucketSize-1)/bucketSize)
     for i := len(d.idx) - 1; i >= 0; i-- {
-        d.idx[i] = ObjId(len(d.objects))
+        d.idx[i] = ObjId(len(d.Objects))
     }
-    for i := len(d.objects) - 1; i >= 0; i-- {
+    for i := len(d.Objects) - 1; i >= 0; i-- {
         // Note: we iterate in reverse order so that the object with
         // the lowest address that intersects a bucket will win.
-        lo := (d.objects[i].Addr - d.HeapStart) / bucketSize
-        hi := (d.objects[i].Addr + d.Size(ObjId(i)) - 1 - d.HeapStart) / bucketSize
+        lo := (d.Objects[i].Addr - d.HeapStart) / bucketSize
+        hi := (d.Objects[i].Addr + d.Size(ObjId(i)) - 1 - d.HeapStart) / bucketSize
         for j := lo; j <= hi; j++ {
             d.idx[j] = ObjId(i)
         }
@@ -1390,7 +1395,7 @@ func link(d *Dump) {
         frames[frameKey{x.Addr, x.Depth}] = x
     }
 
-    // link stack frames to objects
+    // link stack frames to Objects
     for _, f := range d.Frames {
         f.Edges = d.appendFields(f.Edges, f.Data, f.Fields)
     }
@@ -1428,7 +1433,7 @@ func link(d *Dump) {
     for _, r := range d.Otherroots {
         x := d.FindObj(r.toaddr)
         if x != ObjNil {
-            r.Edges = append(r.Edges, Edge{x, 0, r.toaddr - d.objects[x].Addr, ""})
+            r.Edges = append(r.Edges, Edge{x, 0, r.toaddr - d.Objects[x].Addr, ""})
         }
     }
 
@@ -1449,7 +1454,7 @@ func link(d *Dump) {
         for _, addr := range []uint64{f.obj, f.fn, f.fint, f.ot} {
             x := d.FindObj(addr)
             if x != ObjNil {
-                f.Edges = append(f.Edges, Edge{x, 0, addr - d.objects[x].Addr, ""})
+                f.Edges = append(f.Edges, Edge{x, 0, addr - d.Objects[x].Addr, ""})
             }
         }
     }

@@ -7,9 +7,11 @@ import (
     "encoding/binary"
     "flag"
     "fmt"
-    "github.com/slonka/hprof/read"
+    "github.com/slonka/go-heap-to-hprof/read"
+    "io/ioutil"
     "log"
     "os"
+    "strings"
 )
 
 // hprof constants
@@ -155,8 +157,17 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
+
     file.Write(hprof)
     file.Close()
+
+    b := new(strings.Builder)
+    for _, o := range d.Objects {
+        for _, f := range o.Fields {
+            b.WriteString(fmt.Sprintf("%d: %d\n", f.Kind, f.Offset))
+        }
+    }
+    ioutil.WriteFile("/tmp/playground.dump.txt", []byte(b.String()), 0660)
 }
 
 // temporary
